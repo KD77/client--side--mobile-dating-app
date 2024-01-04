@@ -52,17 +52,20 @@ const HomeScreen = ({ navigation }) => {
   }, []);
 
   const handleSelectUser = (userId) => {
+    const filteredProfiles = profiles.filter((profile) => profile.user !== currentUserId);
     setSelectedUserId(userId);
     navigation.navigate('Chat', {
       selectedReceiverId: userId,
+      selectedReceiverName:filteredProfiles[0].firstName,
       currentUserId:currentUserId
     });
+  
   };
 
   // Filter out the current user from the list of profiles
  // Filter out the current user from the list of profiles
 const filteredProfiles = profiles.filter((profile) => profile.user !== currentUserId);
-console.log(filteredProfiles);
+
 
 
   return (

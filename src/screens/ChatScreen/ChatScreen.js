@@ -1,42 +1,82 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
-import axios from 'axios';
 import { GiftedChat } from 'react-native-gifted-chat';
+import axios from 'axios';
 import AuthService from '../../../services/AuthService';
 import io from 'socket.io-client';
 
 
+
 const ChatScreen = ({ route }) => {
-  const { selectedReceiverId, currentUserId } = route.params;
+  const { selectedReceiverId,selectedReceiverName, currentUserId } = route.params;
+
   const [messages, setMessages] = useState([]);
   const [socket, setSocket] = useState(null);
+  const [uniqueMessageIds, setUniqueMessageIds] = useState(new Set());
+ 
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        await fetchChatHistory();
-        initializeSocket();
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      }
-    };
+    // Initialize the socket and join the chat room
+    initializeSocket();
+    joinChatRoom();
 
-    fetchData();
-  }, [fetchChatHistory]);
+    // Fetch chat history
+    fetchChatHistory();
+
+    // Clean up when the component is unmounted
+    return () => {
+      socket && socket.disconnect();
+    };
+  }, []);
 
   const initializeSocket = () => {
-    const newSocket = io('https://two-user-chat-b4909394eef4.herokuapp.com');
-
-    newSocket.on('message', (newMessage) => {
-      // Handle the new message from the server
-      setMessages((previousMessages) => GiftedChat.append(previousMessages, formatMessage(newMessage)));
+    const newSocket = io('http://localhost:5050');
+  
+  
+    newSocket.on('connect', () => {
+      console.log('Socket connected:', newSocket.id);
     });
-
+  
+    newSocket.on('message', (newMessage) => {
+     
+    
+      // Check if the message ID is already in the set
+      if (!uniqueMessageIds.has(newMessage._id)) {
+        // If not, add it to the set and update the state
+     
+        setUniqueMessageIds((prevSet) => new Set([...prevSet, newMessage._id]));
+    
+        // Handle the new message from the server
+        setMessages((previousMessages) => GiftedChat.append(previousMessages, formatMessage(newMessage)));
+      }
+    });
+    
+    
+  
+    newSocket.on('join', (userId) => {
+      console.log(`User ${userId} joined chat:`, newSocket.id);
+    });
+  
+    newSocket.on('disconnect', () => {
+      console.log('Socket disconnected:', newSocket.id);
+    });
+  
+    // Emit the 'join' event after the socket is initialized
+    newSocket.emit('join', currentUserId);
+  
     setSocket(newSocket);
   };
+  
+
+  const joinChatRoom = () => {
+    // Emit the 'join' event to let the server know the user has joined the chat
+    socket && socket.emit('join', currentUserId);
+  };
+
+
   const fetchChatHistory = useCallback(async () => {
     try {
-      const token = await AuthService.getTokenFromKeychain(); // Replace with your actual token
+      const token = await AuthService.getTokenFromKeychain();
   
       const currentUserMessagesResponse = await axios.get(
         `https://two-user-chat-b4909394eef4.herokuapp.com/api/user/chat/history/${selectedReceiverId}`,
@@ -60,8 +100,7 @@ const ChatScreen = ({ route }) => {
       const selectedReceiverMessages = selectedReceiverMessagesResponse.data;
   
       // Use a set to keep track of unique message IDs
-      const uniqueMessageIds = new Set();
-  
+      // Do not declare a new variable here, use the state variable
       const formattedCurrentUserMessages = currentUserMessages
         .filter(message => {
           if (!uniqueMessageIds.has(message._id)) {
@@ -83,73 +122,67 @@ const ChatScreen = ({ route }) => {
         .map(formatMessage);
   
       const formattedMessages = formattedCurrentUserMessages.concat(formattedSelectedReceiverMessages);
-      // console.log('Formatted Messages:', formattedMessages);
-   
-
+  
       // Sort messages by createdAt in descending order
       const sortedMessages = formattedMessages.sort((a, b) => b.createdAt - a.createdAt);
-
+  console.log(sortedMessages);
       setMessages(sortedMessages);
-
+      
     } catch (error) {
       console.error('Error fetching chat history:', error.response?.data || error.message);
     }
-  }, []);
+  }, [currentUserId, selectedReceiverId, uniqueMessageIds, setMessages]);
   
-
-  const formatMessage = (message) => {
+  const formatMessage = (message, isLastMessage) => {
     const senderId = message.sender;
-
-    return {
+  
+    const formattedMessage = {
       _id: message._id,
       text: message.message,
-      createdAt: new Date(message.createdAt),
+      createdAt: message.createdAt,
       user: {
         _id: senderId ? senderId.toString() : 'unknown',
-        name: senderId ? 'Unknown Sender' : 'React Native',
+        name: selectedReceiverName,
       },
     };
+  
+    return formattedMessage;
   };
+  
 
-  const onSend = useCallback(async (newMessages = []) => {
-    // Assuming your API endpoint for sending messages is "/api/user/chat/send"
-    const apiUrl = 'https://two-user-chat-b4909394eef4.herokuapp.com/api/user/chat/send';
+  const onSend = useCallback(
+    (newMessages = []) => {
+      const mess= newMessages[0].text;
+ 
+   
+      // Emit the 'message' event to the server
+   socket && socket.emit('message', {
+        sender: currentUserId,
+        receiver: selectedReceiverId,
+        message:mess,
+        
+      });
 
-    try {
-      const token = await AuthService.getTokenFromKeychain();
-
-      // Extract the text of the new message
-      const text = newMessages[0].text;
-
-      // Send the new message to the server
-      await axios.post(
-        apiUrl,
-        {
-          sender: currentUserId,
-          receiver: selectedReceiverId,
-          message: text,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      // Update the local state with the new messages
+      // Update the state with the new messages
       setMessages((previousMessages) => GiftedChat.append(previousMessages, newMessages));
-
-      // Emit a socket event to inform the server about the new message
-      socket.emit('send-message', { sender: currentUserId, receiver: selectedReceiverId, message: text });
-    } catch (error) {
-      console.error('Error sending message:', error.response?.data || error.message);
-    }
-  }, [currentUserId, selectedReceiverId, socket]);
+    },
+    [currentUserId, selectedReceiverId, socket]
+  );
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <GiftedChat messages={messages} onSend={onSend} user={{ _id: currentUserId }} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <GiftedChat
+          messages={messages}
+          onSend={onSend}
+          user={{
+            _id: currentUserId,
+          }}
+          inverted={true}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
