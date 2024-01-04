@@ -30,7 +30,7 @@ const ChatScreen = ({ route }) => {
   }, []);
 
   const initializeSocket = () => {
-    const newSocket = io('http://localhost:5050');
+    const newSocket = io('https://two-user-chat-b4909394eef4.herokuapp.com');
   
   
     newSocket.on('connect', () => {
